@@ -14,6 +14,12 @@ Link4000 allows you to:
 - Import favorites and browsing history from Microsoft Edge browser
 - Access Microsoft Office recent documents (Windows)
 - Open links in your default browser or file manager
+- Open SharePoint Office documents in the native Office app on Windows; share
+  links without a file extension (`/:x:/`, `/:w:/`, `/:p:/`) are inferred as
+  Excel, Word, or PowerPoint files
+- Enter `file://` URLs (e.g. pasted from a browser) in the Add/Edit dialog;
+  they are converted to plain, percent-decoded file paths when saved
+  (`file:///home/u/My%20Doc/a.pdf` → `/home/u/My Doc/a.pdf`)
 
 ## Installation and Running
 
@@ -126,6 +132,9 @@ Configuration is stored in `~/.link4000/config.toml` (default) or in the path pa
 #     'sharepoint\\.com/.*',
 #     'onedrive\\.live\\.com/.*',
 # ]
+# SharePoint share links carry the document type as a path token instead of a
+# file extension: :x: (Excel), :w: (Word), :p: (PowerPoint). Such links are
+# classified as files and open in the native Office app on Windows.
 
 # Regex patterns for excluding recent items from the link list.
 # Items whose URL or path matches any pattern will be filtered out.
@@ -143,6 +152,10 @@ Configuration is stored in `~/.link4000/config.toml` (default) or in the path pa
 # Auto-reload interval for dynamic sources in minutes (default 15).
 # Set to 0 to disable automatic reloading.
 # reload_interval_minutes = 15
+
+# Show the "Tags" column in the main window (default true).
+# When disabled, the tags are shown in the title tooltip instead.
+# show_tags_column = true
 
 [sources]
 # Source plugins configuration.
@@ -228,6 +241,23 @@ unknown = "#999999"
 ".pdf" = "#EF5350"
 ".one" = "#AB47BC"
 ".onetoc2" = "#AB47BC"
+
+# Extension groups: sets of file extensions sharing a color. Group colors are
+# used for links whose extension is not configured explicitly in the
+# [extensions]/[extensions_dark] tables. Selected groups can also be used as
+# filters in the "Types" section of the Filter dialog (listed between link
+# types and individual file extensions).
+# [[extension_groups]]
+# name = "Pictures"
+# color = "#FF9800"
+# color_dark = "#FFFFFF"
+# extensions = [".png", ".jpg", ".jpeg"]
+#
+# [[extension_groups]]
+# name = "Office documents"
+# color = "#1E88E5"
+# color_dark = "#FEFEFE"
+# extensions = [".doc", ".docx"]
 ```
 
 

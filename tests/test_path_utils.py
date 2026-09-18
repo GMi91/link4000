@@ -14,6 +14,7 @@ from link4000.utils.path_utils import (
     resolve_unc_path,
     resolve_lnk,
     matches_exclusion_pattern,
+    file_url_to_path,
 )
 
 
@@ -102,6 +103,20 @@ class TestGetLinkType:
         result = get_link_type(url)
         assert result == "file"
 
+    @patch("link4000.utils.path_utils.is_sharepoint_url", return_value=True)
+    def test_sharepoint_share_token_is_file(self, mock_sp):
+        """Tests that a SharePoint share-token URL is classified as 'file'."""
+        result = get_link_type(
+            "https://company-my.sharepoint.com/:x:/p/user/some_ID&some_parameter=asdf"
+        )
+        assert result == "file"
+
+    @patch("link4000.utils.path_utils.is_sharepoint_url", return_value=True)
+    def test_sharepoint_unmapped_share_token(self, mock_sp):
+        """Tests that a share-token URL without a known Office type stays 'sharepoint'."""
+        result = get_link_type("https://company-my.sharepoint.com/:f:/p/user/some_ID")
+        assert result == "sharepoint"
+
     @patch("os.path.isdir")
     @patch("os.path.isfile")
     def test_existing_folder(self, mock_isfile, mock_isdir):
@@ -165,6 +180,54 @@ class TestGetFileExtension:
         result = get_file_extension(url)
         assert result == ".pptx"
 
+    @patch("link4000.utils.path_utils.is_sharepoint_url", return_value=True)
+    def test_sharepoint_share_token_extensions(self, mock_sp):
+        """Tests that the file extension is inferred from the SharePoint share token."""
+        assert (
+            get_file_extension(
+                "https://company-my.sharepoint.com/:x:/p/user/some_ID&some_parameter=asdf"
+            )
+            == ".xlsx"
+        )
+        assert (
+            get_file_extension("https://company-my.sharepoint.com/:w:/p/user/some_ID")
+            == ".docx"
+        )
+        assert (
+            get_file_extension("https://company-my.sharepoint.com/:p:/p/user/some_ID")
+            == ".pptx"
+        )
+
+    @patch("link4000.utils.path_utils.is_sharepoint_url", return_value=True)
+    def test_sharepoint_share_token_uppercase(self, mock_sp):
+        """Tests that share tokens are matched case-insensitively."""
+        result = get_file_extension(
+            "https://company-my.sharepoint.com/:X:/p/user/some_ID"
+        )
+        assert result == ".xlsx"
+
+    @patch("link4000.utils.path_utils.is_sharepoint_url", return_value=True)
+    def test_sharepoint_share_token_unmapped(self, mock_sp):
+        """Tests that unmapped share tokens yield no file extension."""
+        assert (
+            get_file_extension("https://company-my.sharepoint.com/:b:/p/user/some_ID")
+            == ""
+        )
+        assert (
+            get_file_extension("https://company-my.sharepoint.com/:f:/p/user/some_ID")
+            == ""
+        )
+
+    @patch("link4000.utils.path_utils.is_sharepoint_url", return_value=True)
+    def test_sharepoint_doc_aspx_extension_beats_share_token(self, mock_sp):
+        """Tests that an explicit file= extension takes precedence over the share token."""
+        url = (
+            "https://some.sharepoint.com/:x:/r/Sites/202384/Sustaining/"
+            "_layouts/15/Doc.aspx?file=some_file.docx"
+        )
+        result = get_file_extension(url)
+        assert result == ".docx"
+
 
 class TestGetSharepointFilename:
     """Tests for get_sharepoint_filename function."""
@@ -218,6 +281,14 @@ class TestGetSharepointFilename:
         result = get_sharepoint_filename("https://company.sharepoint.com/sites/test")
         assert result == "test"
 
+    @patch("link4000.utils.path_utils.is_sharepoint_url", return_value=True)
+    def test_sharepoint_share_token_url_returns_empty(self, mock_sp):
+        """Tests that the opaque share ID of a share-token URL is not treated as a filename."""
+        result = get_sharepoint_filename(
+            "https://company-my.sharepoint.com/:x:/p/user/some_ID&some_parameter=asdf"
+        )
+        assert result == ""
+
 
 class TestToOfficeUri:
     """Tests for to_office_uri function."""
@@ -232,6 +303,38 @@ class TestToOfficeUri:
         result = to_office_uri(url)
         assert result is not None
         assert url in result
+
+    @patch("sys.platform", "win32")
+    @patch("link4000.utils.path_utils.is_sharepoint_url", return_value=True)
+    def test_share_token_excel(self, mock_sp):
+        """Tests that a ':x:' share-token URL returns a ms-excel URI on Windows."""
+        url = "https://company-my.sharepoint.com/:x:/p/user/some_ID&some_parameter=asdf"
+        result = to_office_uri(url)
+        assert result == f"ms-excel:ofv|u|{url}"
+
+    @patch("sys.platform", "win32")
+    @patch("link4000.utils.path_utils.is_sharepoint_url", return_value=True)
+    def test_share_token_word(self, mock_sp):
+        """Tests that a ':w:' share-token URL returns a ms-word URI on Windows."""
+        url = "https://company-my.sharepoint.com/:w:/p/user/some_ID"
+        result = to_office_uri(url)
+        assert result == f"ms-word:ofv|u|{url}"
+
+    @patch("sys.platform", "win32")
+    @patch("link4000.utils.path_utils.is_sharepoint_url", return_value=True)
+    def test_share_token_powerpoint(self, mock_sp):
+        """Tests that a ':p:' share-token URL returns a ms-powerpoint URI on Windows."""
+        url = "https://company-my.sharepoint.com/:p:/p/user/some_ID"
+        result = to_office_uri(url)
+        assert result == f"ms-powerpoint:ofv|u|{url}"
+
+    @patch("sys.platform", "win32")
+    @patch("link4000.utils.path_utils.is_sharepoint_url", return_value=True)
+    def test_unmapped_share_token(self, mock_sp):
+        """Tests that an unmapped share token (e.g. ':f:') returns no Office URI."""
+        url = "https://company-my.sharepoint.com/:f:/p/user/some_ID"
+        result = to_office_uri(url)
+        assert result is None
 
     def test_non_windows_platform(self):
         """Tests that to_office_uri returns None on non-Windows platforms."""
@@ -363,6 +466,86 @@ class TestResolveLnk:
             target, title = resolve_lnk(PureWindowsPath("C:\\broken.lnk"))
             assert target == ""
             assert title == ""
+
+
+class TestFileUrlToPath:
+    """Tests for file_url_to_path function."""
+
+    def test_posix_path_decodes_percent_encoding(self):
+        """Tests that %20 and other percent escapes are decoded in Posix paths."""
+        assert file_url_to_path("file:///home/u/My%20Doc/a.pdf") == "/home/u/My Doc/a.pdf"
+        assert file_url_to_path("file:///home/u/a%28b%29.pdf") == "/home/u/a(b).pdf"
+
+    def test_posix_path_without_encoding(self):
+        """Tests that plain Posix file URLs map to the same path."""
+        assert file_url_to_path("file:///home/u/a.pdf") == "/home/u/a.pdf"
+
+    def test_plus_sign_preserved(self):
+        """Tests that '+' is not treated as a space (unquote, not unquote_plus)."""
+        assert file_url_to_path("file:///home/u/a+b.pdf") == "/home/u/a+b.pdf"
+
+    def test_scheme_case_insensitive(self):
+        """Tests that the file scheme is matched case-insensitively."""
+        assert file_url_to_path("FILE:///home/u/a.pdf") == "/home/u/a.pdf"
+        assert file_url_to_path("File:///home/u/a.pdf") == "/home/u/a.pdf"
+
+    def test_query_and_fragment_stripped(self):
+        """Tests that query and fragment components are stripped."""
+        assert file_url_to_path("file:///home/u/a.pdf?x=1#frag") == "/home/u/a.pdf"
+
+    def test_windows_drive_forward_slashes(self):
+        """Tests that Windows drive URLs are converted to drive-letter paths."""
+        assert file_url_to_path("file:///C:/a%20b.pdf") == "C:/a b.pdf"
+        assert file_url_to_path("file:///C:/dir/a.pdf") == "C:/dir/a.pdf"
+
+    def test_windows_drive_backslashes(self):
+        """Tests that backslash file URLs are converted with forward slashes."""
+        assert file_url_to_path("file:///C:\\dir\\a.pdf") == "C:/dir\\a.pdf"
+
+    def test_windows_drive_legacy_pipe(self):
+        """Tests that the legacy pipe form (file:///C|/...) converts to C:/."""
+        assert file_url_to_path("file:///C|/a.pdf") == "C:/a.pdf"
+
+    def test_windows_drive_encoded_path(self):
+        """Tests that percent-encoded characters decode inside drive paths."""
+        assert file_url_to_path("file:///C:/My%20Docs/a.pdf") == "C:/My Docs/a.pdf"
+
+    def test_unc_path(self):
+        """Tests that host-bearing file URLs become UNC-style //server/... paths."""
+        assert (
+            file_url_to_path("file://server/share/a%20b.pdf") == "//server/share/a b.pdf"
+        )
+
+    def test_localhost_not_converted(self):
+        """Tests that file://localhost/ URLs are explicitly not converted."""
+        assert file_url_to_path("file://localhost/home/u/a.pdf") is None
+
+    def test_empty_path_not_converted(self):
+        """Tests that file:// and file:/// return None."""
+        assert file_url_to_path("file://") is None
+        assert file_url_to_path("file:///") is None
+
+    def test_host_only_not_converted(self):
+        """Tests that a file URL with a host but no path returns None."""
+        assert file_url_to_path("file://server") is None
+
+    def test_percent_encoded_drive_separator_not_converted(self):
+        """Tests that file:///C%3A/... is deliberately left unconverted."""
+        assert file_url_to_path("file:///C%3A/a.pdf") is None
+
+    def test_non_file_scheme_returns_none(self):
+        """Tests that non-file URLs return None."""
+        assert file_url_to_path("https://example.com/a.pdf") is None
+        assert file_url_to_path("http://example.com") is None
+
+    def test_plain_path_returns_none(self):
+        """Tests that plain paths and relative paths return None."""
+        assert file_url_to_path("/home/u/a.pdf") is None
+        assert file_url_to_path("relative/path") is None
+
+    def test_empty_input_returns_none(self):
+        """Tests that an empty string returns None."""
+        assert file_url_to_path("") is None
 
 
 class TestMatchesExclusionPattern:

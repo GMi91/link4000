@@ -26,6 +26,16 @@ _OFFICE_SCHEMES = {
     ".pub": "ms-publisher:ofv|u|",
 }
 
+# SharePoint share-token path segment -> assumed Office file extension.
+# Share links such as https://tenant-my.sharepoint.com/:x:/p/user/ID have no
+# explicit file extension; the single-letter token after the host identifies the
+# document type. Only the tokens with an unambiguous Office app are mapped.
+_SHARE_TOKEN_EXTENSIONS = {
+    "x": ".xlsx",
+    "w": ".docx",
+    "p": ".pptx",
+}
+
 
 def is_url(text: str) -> bool:
     """Return True if *text* looks like a URL (has a scheme like http://, ftp://, …)."""
@@ -53,6 +63,82 @@ def is_file_path(text: str) -> bool:
     if re.match(r"^[A-Za-z]:[/\\]", text):
         return True
     return False
+
+
+def file_url_to_path(file_url: str) -> str | None:
+    """
+    Convert a ``file://`` URL to a plain filesystem path.
+
+    Supported variants (percent-encoded characters such as ``%20`` are
+    decoded via :func:`urllib.parse.unquote`; ``+`` is *not* treated as a
+    space):
+
+    - Posix paths:      ``file:///home/u/My%20Doc/a.pdf`` → ``/home/u/My Doc/a.pdf``
+    - Windows drives:   ``file:///C:/a%20b.pdf``          → ``C:/a b.pdf``
+                        (legacy ``file:///C|/a.pdf``      → ``C:/a.pdf``)
+    - UNC paths:        ``file://server/share/a%20b.pdf`` → ``//server/share/a b.pdf``
+
+    Any other input — including ``file://localhost/...``, empty paths
+    (``file://``, ``file:///``), or URLs with percent-encoded drive
+    separators (``file:///C%3A/...``) — is not converted and ``None`` is
+    returned so the caller can keep the original string. Query and fragment
+    components are stripped since file paths cannot contain them.
+
+    The returned UNC form uses forward slashes, which is the correct
+    representation on Posix (Samba). On Windows, callers normalize the
+    separators by round-tripping the result through
+    ``resolve_unc_path(PurePath(...))`` (as ``AddLinkDialog._on_save``
+    does), which yields ``PureWindowsPath`` and therefore backslash
+    separators: ``\\\\server\\share\\My Docs\\a.pdf``.
+
+    Args:
+        file_url: A possibly ``file://``-prefixed string. Callers should
+            strip surrounding whitespace/quotes beforehand.
+
+    Returns:
+        The decoded filesystem path, or ``None`` if the input is not a
+        convertible ``file://`` URL.
+    """
+    if not file_url or not file_url.lower().startswith("file://"):
+        return None
+
+    try:
+        parsed = urllib.parse.urlsplit(file_url)
+    except ValueError:
+        return None
+
+    # Percent-encoded drive separator (file:///C%3A/...) is deliberately
+    # not converted; check the raw path before decoding.
+    if re.match(r"^/[A-Za-z]%3[Aa]", parsed.path):
+        return None
+
+    path = urllib.parse.unquote(parsed.path)
+    if not path or path == "/":
+        # Empty path ("file://", "file:///") points at no concrete file.
+        return None
+
+    if parsed.netloc:
+        host = urllib.parse.unquote(parsed.netloc)
+        if host.lower() == "localhost":
+            # Explicitly out of scope: local-host file URLs stay unconverted.
+            return None
+        # UNC form: file://server/share/... → //server/share/...
+        return f"//{host}{path}"
+
+    # Windows drive form: file:///C:/... or legacy file:///C|/...
+    drive_match = re.match(r"^/([A-Za-z]:)[/\\](.*)$", path)
+    if drive_match:
+        return f"{drive_match.group(1)}/{drive_match.group(2)}"
+    legacy_drive_match = re.match(r"^/([A-Za-z])\|[/\\](.*)$", path)
+    if legacy_drive_match:
+        return f"{legacy_drive_match.group(1)}:/{legacy_drive_match.group(2)}"
+
+    # Posix absolute path (file:///...). Relative file URLs (file://rel)
+    # would have landed in netloc above and are not supported.
+    if path.startswith("/"):
+        return path
+
+    return None
 
 
 def is_sharepoint_url(url: str) -> bool:
@@ -91,6 +177,21 @@ def matches_exclusion_pattern(url_or_path: str) -> bool:
     return False
 
 
+def _get_share_token(url: str) -> str:
+    """
+    Return the single-letter SharePoint share token of a share URL path.
+
+    Share URLs embed the document type directly after the host, e.g.
+    ``https://tenant-my.sharepoint.com/:x:/p/user/ID``.  The token is returned
+    lowercased, or as an empty string when the path does not start with a
+    ``/:<letter>:/`` segment.
+    """
+    parsed = urllib.parse.urlparse(url)
+    path = urllib.parse.unquote(parsed.path)
+    match = re.match(r"^/:([A-Za-z]):/", path)
+    return match.group(1).lower() if match else ""
+
+
 def get_sharepoint_file_extension(url: str) -> str:
     """
     Extract the file extension from a SharePoint URL.
@@ -98,6 +199,11 @@ def get_sharepoint_file_extension(url: str) -> str:
     For normal SharePoint file URLs the extension is taken from the URL path.
     For SharePoint "Doc.aspx" URLs (e.g. ``_layouts/15/Doc.aspx?file=...``),
     the extension is extracted from the ``file`` query parameter instead.
+
+    For share URLs without an explicit extension (e.g.
+    ``https://tenant-my.sharepoint.com/:x:/p/user/ID``) the extension is
+    inferred from the share token: ``x`` → ``.xlsx``, ``w`` → ``.docx``,
+    ``p`` → ``.pptx``.  An explicit extension always takes precedence.
     Returns the extension (lowercase, with leading dot) or empty string if none.
     """
     if not is_sharepoint_url(url):
@@ -105,9 +211,12 @@ def get_sharepoint_file_extension(url: str) -> str:
 
     filename = get_sharepoint_filename(url)
     if filename:
-        return Path(filename).suffix.lower()
+        ext = Path(filename).suffix.lower()
+        if ext:
+            return ext
 
-    return ""
+    # No explicit extension: fall back to the share token, if any.
+    return _SHARE_TOKEN_EXTENSIONS.get(_get_share_token(url), "")
 
 
 def get_sharepoint_filename(url: str) -> str:
@@ -117,6 +226,8 @@ def get_sharepoint_filename(url: str) -> str:
     For normal SharePoint file URLs the filename is the basename of the URL path.
     For SharePoint "Doc.aspx" URLs (e.g. ``_layouts/15/Doc.aspx?file=...``),
     the filename is taken from the ``file`` query parameter instead.
+    For SharePoint share URLs (e.g. ``/:x:/p/user/ID``) the last path segment is
+    an opaque share ID rather than a filename, so an empty string is returned.
     Returns the filename or empty string if none could be determined.
     """
     if not is_sharepoint_url(url):
@@ -130,6 +241,10 @@ def get_sharepoint_filename(url: str) -> str:
         file_param = query.get("file", [""])[0]
         if file_param:
             return Path(file_param).name
+
+    # Share-token URLs contain an opaque ID, not a real filename.
+    if _get_share_token(url):
+        return ""
 
     filename = path.rsplit("/", 1)[-1] if "/" in path else path
     return filename

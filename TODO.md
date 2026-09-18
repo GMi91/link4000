@@ -7,11 +7,6 @@
 - add dialog for managing exclusions (separate dialog or main list with hidden items shown?)
 - UX: what buttons do we need in the main list?
 
-## DONE
-- edge_favorites: convert favorites folder path to tags, with `folder_tags_enabled` toggle and `folder_name_exclusion_patterns` regex exclusion option
-- fix SharePoint Doc.aspx title pre-fill to use `file=` filename instead of `Doc.aspx`
-- add structured logging (file + stderr + sys.excepthook) and wrap all link-opening paths in try/except with traceback logging
-
 ## NOT PLANNED
 - add auto-update mechanism ← this needs public distribution of a binary which introduces licensing issues
 - add indexing of items to enable full text search ← out of scope, link4000 is a link manager, not a document management system
