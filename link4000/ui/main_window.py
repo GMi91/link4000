@@ -51,7 +51,14 @@ from PySide6.QtCore import (
     QModelIndex,
     QUrl,
 )
-from PySide6.QtGui import QAction, QPainter, QColor, QFont, QCloseEvent, QDesktopServices
+from PySide6.QtGui import (
+    QAction,
+    QPainter,
+    QColor,
+    QFont,
+    QCloseEvent,
+    QDesktopServices,
+)
 
 from link4000.data.link_store import LinkStore
 from link4000.models.link_model import LinkTableModel, LinkSortFilterModel
@@ -623,7 +630,7 @@ class MainWindow(QMainWindow):
                     link = Link(
                         title=entry.title,
                         url=url,
-                        tags=[entry.source_tag] + getattr(entry, "folder_tags", []),
+                        tags=[entry.source_tag] + entry.extra_tags,
                         id=f"{source.name}:{url}",
                         created_at=entry.created_at,
                         updated_at=entry.updated_at,

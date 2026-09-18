@@ -8,6 +8,7 @@
 - UX: what buttons do we need in the main list?
 
 ## DONE
+- edge_favorites: convert favorites folder path to tags, with `folder_tags_enabled` toggle and `folder_name_exclusion_patterns` regex exclusion option
 - fix SharePoint Doc.aspx title pre-fill to use `file=` filename instead of `Doc.aspx`
 - add structured logging (file + stderr + sys.excepthook) and wrap all link-opening paths in try/except with traceback logging
 
